@@ -89,9 +89,14 @@ close(C) when is_pid(C) ->
     catch gen_server:cast(C, stop),
     ok.
 
+%% @doc Warning: deprecated due to its use of inifinity
 -spec sync_command(epgsql:connection(), epgsql_command:command(), any()) -> any().
 sync_command(C, Command, Args) ->
-    gen_server:call(C, {command, Command, Args}, infinity).
+    sync_command(C, Command, Args, infinity).
+
+-spec sync_command(epgsql:connection(), epgsql_command:command(), any(), timeout()) -> any().
+sync_command(C, Command, Args, Timeout) ->
+    gen_server:call(C, {command, Command, Args}, Timeout).
 
 -spec async_command(epgsql:connection(), cast | incremental,
                     epgsql_command:command(), any()) -> reference().
@@ -101,15 +106,28 @@ async_command(C, Transport, Command, Args) ->
     ok = gen_server:cast(C, {{Transport, Pid, Ref}, Command, Args}),
     Ref.
 
+%% @doc Warning: deprecated due to its use of inifinity
 get_parameter(C, Name) ->
-    gen_server:call(C, {get_parameter, to_binary(Name)}, infinity).
+    get_parameter(C, Name, infinity).
 
-set_notice_receiver(C, PidOrName) when is_pid(PidOrName);
-                                       is_atom(PidOrName) ->
-    gen_server:call(C, {set_async_receiver, PidOrName}, infinity).
+get_parameter(C, Name, Timeout) ->
+    gen_server:call(C, {get_parameter, to_binary(Name)}, Timeout).
 
+%% @doc Warning: deprecated due to its use of inifinity
+set_notice_receiver(C, PidOrName) ->
+    set_notice_receiver(C, PidOrName, infinity).
+
+set_notice_receiver(C, PidOrName, Timeout) when is_pid(PidOrName);
+                                                is_atom(PidOrName) ->
+    gen_server:call(C, {set_async_receiver, PidOrName}, Timeout).
+
+
+%% @doc Warning: deprecated due to its use of inifinity
 get_cmd_status(C) ->
-    gen_server:call(C, get_cmd_status, infinity).
+    get_cmd_status(C, infinity).
+
+get_cmd_status(C, Timeout) ->
+    gen_server:call(C, get_cmd_status, Timeout).
 
 cancel(S) ->
     gen_server:cast(S, cancel).

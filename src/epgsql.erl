@@ -5,25 +5,26 @@
 
 -export([connect/1, connect/2, connect/3, connect/4, connect/5,
          close/1,
-         get_parameter/2,
-         set_notice_receiver/2,
-         get_cmd_status/1,
-         squery/2,
-         equery/2, equery/3, equery/4,
-         prepared_query/3,
-         parse/2, parse/3, parse/4,
-         describe/2, describe/3,
-         bind/3, bind/4,
-         execute/2, execute/3, execute/4,
-         execute_batch/2,
-         close/2, close/3,
-         sync/1,
+         get_parameter/2, get_parameter/3,
+         set_notice_receiver/2, set_notice_receiver/3,
+         get_cmd_status/1, get_cmd_status/2,
+         squery/2, squery/3,
+         equery/2, equery/3, equery/4, equery/5,
+         prepared_query/3, prepared_query/4,
+         parse/2, parse/3, parse/4, parse/5,
+         describe/2, describe/3, describe/4,
+         bind/3, bind/4, bind/5,
+         execute/2, execute/3, execute/4, execute/5,
+         execute_batch/2, execute_batch/3,
+         close/2, close/3, close/4,
+         sync/1, sync/2,
          cancel/1,
          update_type_cache/1,
          update_type_cache/2,
+         update_type_cache/3,
          with_transaction/2,
          with_transaction/3,
-         sync_on_error/2,
+         sync_on_error/2, sync_on_error/3,
          standby_status_update/3,
          start_replication/5,
          start_replication/6,
@@ -160,8 +161,9 @@ connect(C, Host, Username, Password, Opts) ->
        -> {ok, Connection :: connection()} | {error, Reason :: connect_error()}.
 call_connect(C, Opts) ->
     Opts1 = epgsql_cmd_connect:opts_hide_password(to_map(Opts)),
+    Timeout = maps:get(timeout, Opts1, infinity),
     case epgsql_sock:sync_command(
-           C, epgsql_cmd_connect, Opts1) of
+           C, epgsql_cmd_connect, Opts1, Timeout) of
         connected ->
             %% If following call fails for you, try to add {codecs, []} connect option
             {ok, _} = maybe_update_typecache(C, Opts1),
@@ -189,14 +191,19 @@ update_type_cache(C) ->
 
 -spec update_type_cache(connection(), [{epgsql_codec:codec_mod(), Opts :: any()}]) ->
                                epgsql_cmd_update_type_cache:response() | {error, empty}.
-update_type_cache(_C, []) ->
-    {error, empty};
 update_type_cache(C, Codecs) ->
+    update_type_cache(C, Codecs, infinity).
+
+-spec update_type_cache(connection(), [{epgsql_codec:codec_mod(), Opts :: any()}], timeout()) ->
+                               epgsql_cmd_update_type_cache:response() | {error, empty}.
+update_type_cache(_C, [], _Timeout) ->
+    {error, empty};
+update_type_cache(C, Codecs, Timeout) ->
     %% {error, #error{severity = error,
     %%                message = <<"column \"typarray\" does not exist in pg_type">>}}
     %% Do not fail connect if pg_type table in not in the expected
     %% format. Known to happen for Redshift which is based on PG v8.0.2
-    epgsql_sock:sync_command(C, epgsql_cmd_update_type_cache, Codecs).
+    epgsql_sock:sync_command(C, epgsql_cmd_update_type_cache, Codecs, Timeout).
 
 %% @doc close connection
 -spec close(connection()) -> ok.
@@ -205,48 +212,63 @@ close(C) ->
 
 -spec get_parameter(connection(), binary()) -> binary() | undefined.
 get_parameter(C, Name) ->
-    epgsql_sock:get_parameter(C, Name).
+    get_parameter(C, Name, infinity).
+
+-spec get_parameter(connection(), binary(), timeout()) -> binary() | undefined.
+get_parameter(C, Name, Timeout) ->
+    epgsql_sock:get_parameter(C, Name, Timeout).
 
 -spec set_notice_receiver(connection(), undefined | pid() | atom()) ->
                                  {ok, Previous :: pid() | atom()}.
 set_notice_receiver(C, PidOrName) ->
-    epgsql_sock:set_notice_receiver(C, PidOrName).
+    set_notice_receiver(C, PidOrName, infinity).
+
+-spec set_notice_receiver(connection(), undefined | pid() | atom(), timeout()) ->
+                                 {ok, Previous :: pid() | atom()}.
+set_notice_receiver(C, PidOrName, Timeout) ->
+    epgsql_sock:set_notice_receiver(C, PidOrName, Timeout).
+
+get_cmd_status(C) ->
+    get_cmd_status(C, infinity).
 
 %% @doc Returns last command status message
 %% If multiple queries were executed using `squery/2', separated by semicolon,
 %% only the last query's status will be available.
 %% See https://www.postgresql.org/docs/current/static/libpq-exec.html#LIBPQ-PQCMDSTATUS
--spec get_cmd_status(connection()) -> {ok, Status}
+-spec get_cmd_status(connection(), timeout()) -> {ok, Status}
                                           when
       Status :: undefined | atom() | {atom(), integer()}.
-get_cmd_status(C) ->
-    epgsql_sock:get_cmd_status(C).
+get_cmd_status(C, Timeout) ->
+    epgsql_sock:get_cmd_status(C, Timeout).
 
 -spec squery(connection(), sql_query()) -> epgsql_cmd_squery:response().
 %% @doc runs simple `SqlQuery' via given `Connection'
+%% deprecated due to its use of infinity
 squery(Connection, SqlQuery) ->
-    epgsql_sock:sync_command(Connection, epgsql_cmd_squery, SqlQuery).
+    squery(Connection, SqlQuery, infinity).
 
-equery(C, Sql) ->
-    equery(C, Sql, []).
+squery(Connection, SqlQuery, Timeout) ->
+    epgsql_sock:sync_command(Connection, epgsql_cmd_squery, SqlQuery, Timeout).
+
+ equery(C, Sql) ->
+     equery(C, Sql, []).
 
 %% TODO add fast_equery command that doesn't need parsed statement
 equery(C, Sql, Parameters) ->
-    case parse(C, "", Sql, []) of
-        {ok, #statement{types = Types} = S} ->
-            TypedParameters = lists:zip(Types, Parameters),
-            epgsql_sock:sync_command(C, epgsql_cmd_equery, {S, TypedParameters});
-        Error ->
-            Error
-    end.
+    equery(C, "", Sql, Parameters).
 
 -spec equery(connection(), string(), sql_query(), [bind_param()]) ->
-                    epgsql_cmd_equery:response().
+    epgsql_cmd_equery:response().
 equery(C, Name, Sql, Parameters) ->
-    case parse(C, Name, Sql, []) of
+    equery(C, Name, Sql, Parameters, infinity).
+
+-spec equery(connection(), string(), sql_query(), [bind_param()], timeout()) ->
+    epgsql_cmd_equery:response().
+equery(C, Name, Sql, Parameters, Timeout) ->
+    case parse(C, Name, Sql, [], Timeout) of
         {ok, #statement{types = Types} = S} ->
             TypedParameters = lists:zip(Types, Parameters),
-            epgsql_sock:sync_command(C, epgsql_cmd_equery, {S, TypedParameters});
+            epgsql_sock:sync_command(C, epgsql_cmd_equery, {S, TypedParameters}, Timeout);
         Error ->
             Error
     end.
@@ -254,10 +276,15 @@ equery(C, Name, Sql, Parameters) ->
 -spec prepared_query(C::connection(), Name::string(), Parameters::[bind_param()]) ->
                             epgsql_cmd_prepared_query:response().
 prepared_query(C, Name, Parameters) ->
-    case describe(C, statement, Name) of
+    prepared_query(C, Name, Parameters, infinity).
+
+-spec prepared_query(C::connection(), Name::string(), Parameters::[bind_param()], timeout()) ->
+                            epgsql_cmd_prepared_query:response().
+prepared_query(C, Name, Parameters, Timeout) ->
+    case describe(C, statement, Name, Timeout) of
         {ok, #statement{types = Types} = S} ->
             TypedParameters = lists:zip(Types, Parameters),
-            epgsql_sock:sync_command(C, epgsql_cmd_prepared_query, {S, TypedParameters});
+            epgsql_sock:sync_command(C, epgsql_cmd_prepared_query, {S, TypedParameters}, Timeout);
         Error ->
             Error
     end.
@@ -274,9 +301,14 @@ parse(C, Sql, Types) ->
 -spec parse(connection(), iolist(), sql_query(), [epgsql_type()]) ->
                    epgsql_cmd_parse:response().
 parse(C, Name, Sql, Types) ->
+    parse(C, Name, Sql, Types, infinity).
+
+-spec parse(connection(), iolist(), sql_query(), [epgsql_type()], timeout()) ->
+                   epgsql_cmd_parse:response().
+parse(C, Name, Sql, Types, Timeout) ->
     sync_on_error(
       C, epgsql_sock:sync_command(
-           C, epgsql_cmd_parse, {Name, Sql, Types})).
+           C, epgsql_cmd_parse, {Name, Sql, Types}, Timeout)).
 
 %% bind
 
@@ -286,10 +318,15 @@ bind(C, Statement, Parameters) ->
 -spec bind(connection(), statement(), string(), [bind_param()]) ->
                   epgsql_cmd_bind:response().
 bind(C, Statement, PortalName, Parameters) ->
+    bind(C, Statement, PortalName, Parameters).
+
+-spec bind(connection(), statement(), string(), [bind_param()], timeout()) ->
+                  epgsql_cmd_bind:response().
+bind(C, Statement, PortalName, Parameters, Timeout) ->
     sync_on_error(
       C,
       epgsql_sock:sync_command(
-        C, epgsql_cmd_bind, {Statement, PortalName, Parameters})).
+        C, epgsql_cmd_bind, {Statement, PortalName, Parameters}, Timeout)).
 
 %% execute
 
@@ -302,29 +339,43 @@ execute(C, S, N) ->
 -spec execute(connection(), statement(), string(), non_neg_integer()) -> Reply when
       Reply :: epgsql_cmd_execute:response().
 execute(C, S, PortalName, N) ->
-    epgsql_sock:sync_command(C, epgsql_cmd_execute, {S, PortalName, N}).
+    execute(C, S, PortalName, N, infinity).
+
+-spec execute(connection(), statement(), string(), non_neg_integer(), timeout() ) -> Reply when
+      Reply :: epgsql_cmd_execute:response().
+execute(C, S, PortalName, N, Timeout) ->
+    epgsql_sock:sync_command(C, epgsql_cmd_execute, {S, PortalName, N}, Timeout).
 
 -spec execute_batch(connection(), [{statement(), [bind_param()]}]) ->
                            epgsql_cmd_batch:response().
 execute_batch(C, Batch) ->
     epgsql_sock:sync_command(C, epgsql_cmd_batch, Batch).
 
+-spec execute_batch(connection(), [{statement(), [bind_param()]}], timeout()) ->
+                           epgsql_cmd_batch:response().
+execute_batch(C, Batch, Timeout) ->
+    epgsql_sock:sync_command(C, epgsql_cmd_batch, Batch, Timeout).
+
 %% statement/portal functions
 -spec describe(connection(), statement()) -> epgsql_cmd_describe_statement:response().
 describe(C, #statement{name = Name}) ->
     describe(C, statement, Name).
 
--spec describe(connection(), portal, iodata()) -> epgsql_cmd_describe_portal:response();
-              (connection(), statement, iodata()) -> epgsql_cmd_describe_statement:response().
-describe(C, statement, Name) ->
-    sync_on_error(
-      C, epgsql_sock:sync_command(
-           C, epgsql_cmd_describe_statement, Name));
+describe(C, Type, Name) ->
+    describe(C, Type, Name, infinity).
 
-describe(C, portal, Name) ->
+
+-spec describe(connection(), portal, iodata(), timeout()) -> epgsql_cmd_describe_portal:response();
+              (connection(), statement, iodata(), timeout()) -> epgsql_cmd_describe_statement:response().
+describe(C, statement, Name, Timeout) ->
     sync_on_error(
       C, epgsql_sock:sync_command(
-           C, epgsql_cmd_describe_portal, Name)).
+           C, epgsql_cmd_describe_statement, Name, Timeout));
+
+describe(C, portal, Name, Timeout) ->
+    sync_on_error(
+      C, epgsql_sock:sync_command(
+           C, epgsql_cmd_describe_portal, Name, Timeout)).
 
 %% @doc close statement
 -spec close(connection(), statement()) -> epgsql_cmd_close:response().
@@ -333,11 +384,19 @@ close(C, #statement{name = Name}) ->
 
 -spec close(connection(), statement | portal, iodata()) -> epgsql_cmd_close:response().
 close(C, Type, Name) ->
-    epgsql_sock:sync_command(C, epgsql_cmd_close, {Type, Name}).
+    close(C, Type, Name, infinity).
+
+-spec close(connection(), statement | portal, iodata(), timeout()) -> epgsql_cmd_close:response().
+close(C, Type, Name, Timeout) ->
+    epgsql_sock:sync_command(C, epgsql_cmd_close, {Type, Name}, Timeout).
 
 -spec sync(connection()) -> epgsql_cmd_sync:response().
 sync(C) ->
-    epgsql_sock:sync_command(C, epgsql_cmd_sync, []).
+    sync(C, infinity).
+
+-spec sync(connection(), timeout()) -> epgsql_cmd_sync:response().
+sync(C, Timeout) ->
+    epgsql_sock:sync_command(C, epgsql_cmd_sync, [], Timeout).
 
 -spec cancel(connection()) -> ok.
 cancel(C) ->
@@ -376,13 +435,14 @@ with_transaction(C, F, Opts0) ->
                     [<<"BEGIN ">> | BeginOpts];
                 _ -> <<"BEGIN">>
             end,
+    Timeout = maps:get(timeout, Opts, infinity),
     try
         {ok, [], []} = squery(C, Begin),
         R = F(C),
         {ok, [], []} = squery(C, <<"COMMIT">>),
         case Opts of
             #{ensure_committed := true} ->
-                {ok, CmdStatus} = get_cmd_status(C),
+                {ok, CmdStatus} = get_cmd_status(C, Timeout),
                 (commit == CmdStatus) orelse error({ensure_committed_failed, CmdStatus});
             _ -> ok
         end,
@@ -398,11 +458,14 @@ with_transaction(C, F, Opts0) ->
             end
     end.
 
-sync_on_error(C, Error = {error, _}) ->
-    ok = sync(C),
+sync_on_error(C, R) ->
+    sync_on_error(C, R, infinity).
+
+sync_on_error(C, Error = {error, _}, Timeout) ->
+    ok = sync(C, Timeout),
     Error;
 
-sync_on_error(_C, R) ->
+sync_on_error(_C, R, _Timeout) ->
     R.
 
 -spec standby_status_update(connection(), lsn(), lsn()) -> ok.
@@ -430,11 +493,14 @@ handle_x_log_data(Mod, StartLSN, EndLSN, WALRecord, Repl) ->
 %%                      For example: "option_name1 'value1', option_name2 'value2'"
 %% returns `ok' otherwise `{error, Reason}'
 start_replication(Connection, ReplicationSlot, Callback, CbInitState, WALPosition, PluginOpts) ->
-    Command = {ReplicationSlot, Callback, CbInitState, WALPosition, PluginOpts},
-    epgsql_sock:sync_command(Connection, epgsql_cmd_start_replication, Command).
+    start_replication(Connection, ReplicationSlot, Callback, CbInitState, WALPosition, PluginOpts, infinity).
 
 start_replication(Connection, ReplicationSlot, Callback, CbInitState, WALPosition) ->
     start_replication(Connection, ReplicationSlot, Callback, CbInitState, WALPosition, []).
+
+start_replication(Connection, ReplicationSlot, Callback, CbInitState, WALPosition, PluginOpts, Timeout) ->
+    Command = {ReplicationSlot, Callback, CbInitState, WALPosition, PluginOpts},
+    epgsql_sock:sync_command(Connection, epgsql_cmd_start_replication, Command, Timeout).
 
 %% @private
 -spec to_map([{any(), any()}] | map()) -> map().
