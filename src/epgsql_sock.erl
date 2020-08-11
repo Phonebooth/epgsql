@@ -27,11 +27,11 @@
 
 -export([start_link/0,
          close/1,
-         sync_command/3,
+         sync_command/3, sync_command/4,
          async_command/4,
-         get_parameter/2,
-         set_notice_receiver/2,
-         get_cmd_status/1,
+         get_parameter/2, get_parameter/3,
+         set_notice_receiver/2, set_notice_receiver/3,
+         get_cmd_status/1, get_cmd_status/2,
          cancel/1]).
 
 -export([handle_call/3, handle_cast/2, handle_info/2]).
