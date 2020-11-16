@@ -151,6 +151,7 @@ cast(C, Command, Args) ->
     epgsql_sock:async_command(C, cast, Command, Args).
 
 complete_connect(C, Ref, Opts) ->
+    Timeout = maps:get(timeout, Opts, infinity),
     receive
         %% If we connect, then try and update the type cache.  When
         %% all is said and done, pass the result along as a message.
@@ -168,5 +169,7 @@ complete_connect(C, Ref, Opts) ->
             self() ! {C, Ref, Err};
         {'EXIT', C, Reason} ->
             self() ! {'EXIT', C, Reason}
+    after Timeout ->
+            self() ! {C, Ref, {error, timeout}}
     end,
     Ref.
